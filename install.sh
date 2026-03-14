@@ -7,9 +7,17 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Исправление ошибки "unable to resolve host"
+fix_hostname() {
+    if ! grep -q "$(hostname)" /etc/hosts; then
+        echo "127.0.1.1 $(hostname)" | sudo tee -a /etc/hosts > /dev/null
+    fi
+}
+
 # --- БЛОК ПРОВЕРОК ---
 
 check_system() {
+    fix_hostname
     echo -e "${YELLOW}>>> Инспекция системы...${NC}"
     
     # 1. Проверка базовых утилит
@@ -64,10 +72,13 @@ EOF
 
 install_remnanode() {
     echo -e "\n${CYAN}--- Конфигурация Remnanode ---${NC}"
-    if [ -d "/opt/remnanode" ] && [ -f "/opt/remnanode/docker-compose.yml" ]; then
-        echo -e "${YELLOW}Внимание: Конфиг Remnanode уже существует.${NC}"
-        read -p "Перезаписать его? (y/n): " confirm
-        [[ "$confirm" != "y" ]] && return
+    if [ -f "/opt/remnanode/docker-compose.yml" ]; then
+        echo -e "${RED} ПРЕДУПРЕЖДЕНИЕ: Конфигурация Remnanode уже существует!${NC}"
+        read -p "Вы уверены, что хотите ПОЛНОСТЬЮ ЗАМЕНИТЬ текущий конфиг? (y/n): " confirm
+        if [[ "$confirm" != "y" ]]; then
+            echo -e "${YELLOW}Установка отменена. Старый конфиг сохранен.${NC}"
+            return
+        fi
     fi
 
     mkdir -p /opt/remnanode
@@ -98,10 +109,13 @@ EOF
 
 install_beszel() {
     echo -e "\n${CYAN}--- Конфигурация Beszel Agent ---${NC}"
-    if [ -d "/opt/beszel" ] && [ -f "/opt/beszel/docker-compose.yml" ]; then
-        echo -e "${YELLOW}Внимание: Конфиг Beszel уже существует.${NC}"
-        read -p "Перезаписать его? (y/n): " confirm
-        [[ "$confirm" != "y" ]] && return
+    if [ -f "/opt/beszel/docker-compose.yml" ]; then
+        echo -e "${RED} ПРЕДУПРЕЖДЕНИЕ: Конфигурация Beszel Agent уже существует!${NC}"
+        read -p "Вы уверены, что хотите ПОЛНОСТЬЮ ЗАМЕНИТЬ текущий конфиг? (y/n): " confirm
+        if [[ "$confirm" != "y" ]]; then
+            echo -e "${YELLOW}Установка отменена. Старый конфиг сохранен.${NC}"
+            return
+        fi
     fi
 
     mkdir -p /opt/beszel
@@ -133,7 +147,7 @@ EOF
 
 show_menu() {
     echo -e "\n${CYAN}==========================================${NC}"
-    echo -e "${CYAN}       МЕНЕДЖЕР УСТАНОВКИ НОДЫ           ${NC}"
+    echo -e "${CYAN}        МЕНЕДЖЕР УСТАНОВКИ НОДЫ           ${NC}"
     echo -e "${CYAN}==========================================${NC}"
     echo -e "1) Установить/Обновить Remnanode"
     echo -e "2) Установить/Обновить Beszel Agent"
