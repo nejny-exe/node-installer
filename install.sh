@@ -1,64 +1,79 @@
 #!/bin/bash
 
-# Проверка прав root
-if [ "$EUID" -ne 0 ]; then
-  echo "Пожалуйста, запустите скрипт от имени root (sudo)."
-  exit
-fi
+# Цвета
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
 
-echo "--- Настройка системы и установка компонентов ---"
+echo -e "${YELLOW}>>> Запуск комплексной настройки сервера${NC}"
 
-# 1. Обновление системы
+# 1. Системные обновления и база
 apt update && apt upgrade -y
+apt install -y curl wget fail2ban ufw jq
 
-# 2. Установка базовых утилит, Docker, Fail2Ban и UFW
-apt install -y curl wget git fail2ban ufw apt-transport-https ca-certificates software-properties-common
-
-# Установка Docker (официальный скрипт)
+# 2. Установка Docker
 if ! command -v docker &> /dev/null; then
+    echo -e "${GREEN}>>> Установка Docker...${NC}"
     curl -fsSL https://get.docker.com -o get-docker.sh
     sh get-docker.sh
     rm get-docker.sh
 fi
 
-# 3. Настройка UFW (Файрвол)
-echo "--- Настройка портов ---"
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow 22/tcp          # SSH
-ufw allow 80/tcp          # HTTP
-ufw allow 443/tcp         # HTTPS
-ufw allow 45876/tcp       # Beszel Agent Default Port
-ufw allow 443/udp         # Для протоколов VPN (Reality/etc)
+# 3. Настройка Firewall
+ufw allow 22/tcp
+ufw allow 2222/tcp
+ufw allow 45876/tcp
+ufw allow 443/tcp
+ufw allow 443/udp
 ufw --force enable
 
-# 4. Запрос данных у пользователя
-echo "--- Ввод данных для конфигурации ---"
-read -p "Введите KEY для Beszel Agent: " BESZEL_KEY
-read -p "Введите TOKEN для Beszel Agent: " BESZEL_TOKEN
-read -p "Введите HUB_URL для Beszel Agent (например, https://hub.example.com): " BESZEL_HUB_URL
+# 4. Сбор данных для Remnanode
+echo -e "${YELLOW}--- Настройка Remnanode ---${NC}"
+read -p "Введите SECRET_KEY для ноды (или Enter для автогенерации): " REMNA_SECRET
+if [ -z "$REMNA_SECRET" ]; then
+    REMNA_SECRET=$(openssl rand -hex 16)
+    echo -e "Сгенерирован ключ: ${GREEN}$REMNA_SECRET${NC}"
+fi
 
-# 5. Настройка Remnanode
-echo "--- Установка Remnanode ---"
-mkdir -p /opt/remnanode
+# 5. Опрос по Beszel
+echo -e "${YELLOW}--- Настройка Beszel Agent ---${NC}"
+read -p "Настраиваем Beszel сейчас? (y/n): " SETUP_BESZEL
+
+if [[ "$SETUP_BESZEL" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    read -p "Введите KEY: " B_KEY
+    read -p "Введите TOKEN: " B_TOKEN
+    read -p "Введите HUB_URL: " B_URL
+else
+    echo -e "${YELLOW}Ок, создам конфиг с пустыми значениями.${NC}"
+    B_KEY="YOUR_KEY_HERE"
+    B_TOKEN="YOUR_TOKEN_HERE"
+    B_URL="YOUR_HUB_URL_HERE"
+fi
+
+# 6. Создание директорий и файлов
+mkdir -p /opt/remnanode /opt/beszel
+
+# Конфиг Remnanode
 cat <<EOF > /opt/remnanode/docker-compose.yml
 services:
   remnanode:
-    image: remnawave/remnanode:latest
     container_name: remnanode
-    restart: unless-stopped
+    hostname: remnanode
+    image: remnawave/node:latest
     network_mode: host
-    volumes:
-      - /etc/remnanode:/etc/remnanode
-      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
+    cap_add:
+      - NET_ADMIN
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
     environment:
-      - NODE_NAME=Sand-VPN-Node
-      # Добавьте специфичные переменные Remnanode, если требуется
+      - NODE_PORT=2222
+      - SECRET_KEY="$REMNA_SECRET"
 EOF
 
-# 6. Настройка Beszel Agent
-echo "--- Установка Beszel Agent ---"
-mkdir -p /opt/beszel
+# Конфиг Beszel
 cat <<EOF > /opt/beszel/docker-compose.yml
 services:
   beszel-agent:
@@ -71,31 +86,30 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       LISTEN: 45876
-      KEY: "$BESZEL_KEY"
-      TOKEN: "$BESZEL_TOKEN"
-      HUB_URL: "$BESZEL_HUB_URL"
+      KEY: "$B_KEY"
+      TOKEN: "$B_TOKEN"
+      HUB_URL: "$B_URL"
 EOF
 
-# 7. Запуск контейнеров
-echo "--- Запуск сервисов ---"
+# 7. Запуск
+echo -e "${GREEN}>>> Запуск Remnanode...${NC}"
 cd /opt/remnanode && docker compose up -d
-cd /opt/beszel && docker compose up -d
 
-# 8. Настройка Fail2Ban для защиты SSH
-cat <<EOF > /etc/fail2ban/jail.local
+if [[ "$SETUP_BESZEL" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    echo -e "${GREEN}>>> Запуск Beszel Agent...${NC}"
+    cd /opt/beszel && docker compose up -d
+else
+    echo -e "${YELLOW}>>> Beszel Agent не запущен (заполните /opt/beszel/docker-compose.yml и запустите вручную)${NC}"
+fi
+
+# 8. Fail2Ban
+cat <<EOF > /etc/fail2ban/jail.d/custom.local
 [sshd]
 enabled = true
 port = 22
-filter = sshd
-logpath = /var/log/auth.log
 maxretry = 5
-bantime = 3600
+bantime = 1h
 EOF
-
 systemctl restart fail2ban
 
-echo "--- Установка завершена! ---"
-echo "Remnanode: /opt/remnanode"
-echo "Beszel Agent: /opt/beszel"
-echo "Статус портов:"
-ufw status
+echo -e "${GREEN}Готово! Данные сохранены в /opt/${NC}"
