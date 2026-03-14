@@ -93,7 +93,7 @@ EOF
 
 # 7. Запуск
 echo -e "${GREEN}>>> Запуск Remnanode...${NC}"
-cd /opt/remnanode && docker compose up -d
+cd /opt/remnanode && docker compose up -d && docker compose logs -f -t
 
 if [[ "$SETUP_BESZEL" =~ ^([yY][eE][sS]|[yY])$ ]]; then
     echo -e "${GREEN}>>> Запуск Beszel Agent...${NC}"
