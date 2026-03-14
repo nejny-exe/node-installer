@@ -147,3 +147,26 @@ show_menu() {
             check_system
             install_remnanode
             ;;
+        2)
+            check_system
+            install_beszel
+            ;;
+        3)
+            check_system
+            install_remnanode
+            install_beszel
+            ;;
+        4)
+            echo -e "${YELLOW}Завершение работы.${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Ошибка: выберите пункт от 1 до 4.${NC}"
+            sleep 1
+            show_menu
+            ;;
+    esac
+}
+
+# Запуск программы
+show_menu
